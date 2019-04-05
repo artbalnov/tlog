@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 )
 
 type Logger interface {
@@ -13,62 +14,90 @@ type Logger interface {
 	Errorf(string, ...interface{})
 }
 
+const baseURLTemplate = "https://api.telegram.org/bot%s/sendMessage"
+
 const (
-	requestTemplate = "https://api.telegram.org/bot%s/sendMessage?chat_id=%s&parse_mode=HTML&text=%s"
+	chatIDKey    = "chat_id"
+	parseModeKey = "parse_mode"
+	textKey      = "text"
 )
 
 const (
-	errorHeaderTemplate = "<b>ERROR:</b>%0A"
-	fyiHeaderTemplate   = "<i>FYI:</i>%0A"
+	errorHeaderTemplate = "<b>ERROR:</b>"
+	fyiHeaderTemplate   = "<i>FYI:</i>"
 
 	errorStyleTemplate = "code"
 	fyiStyleTemplate   = "pre"
 )
 
-func NewLogger(apiKey, chanelID string) Logger {
-	return &tlog{
-		apiKey:   apiKey,
-		chanelID: chanelID,
-	}
+type tlog struct {
+	botKey  string
+	chatID  string
+	baseURL string
 }
 
-type tlog struct {
-	apiKey   string
-	chanelID string
+func NewLogger(botKey, chatID string) (Logger, error) {
+	u, err := url.Parse(fmt.Sprintf(baseURLTemplate, botKey))
+	if err != nil {
+		return nil, fmt.Errorf("can't init logger: %v", err)
+	}
+
+	return &tlog{
+		botKey:  botKey,
+		chatID:  chatID,
+		baseURL: u.String(),
+	}, nil
 }
 
 func (rcv *tlog) Info(args ...interface{}) {
 	log.Print(args...)
-	rcv.sendMessageRequest(formatMessage(fyiHeaderTemplate, fyiStyleTemplate, args...))
+	rcv.sendMessageRequestAsync(formatMessage(fyiHeaderTemplate, fyiStyleTemplate, args...))
 }
 
 func (rcv *tlog) Infof(format string, args ...interface{}) {
 	log.Printf(format, args...)
-	rcv.sendMessageRequest(formatfMessage(fyiHeaderTemplate, fyiStyleTemplate, format, args...))
+	rcv.sendMessageRequestAsync(formatfMessage(fyiHeaderTemplate, fyiStyleTemplate, format, args...))
 }
 
 func (rcv *tlog) Error(args ...interface{}) {
 	log.Print(args...)
-	rcv.sendMessageRequest(formatMessage(errorHeaderTemplate, errorStyleTemplate, args...))
+	rcv.sendMessageRequestAsync(formatMessage(errorHeaderTemplate, errorStyleTemplate, args...))
 }
 
 func (rcv *tlog) Errorf(format string, args ...interface{}) {
 	log.Printf(format, args...)
-	rcv.sendMessageRequest(formatfMessage(errorHeaderTemplate, errorStyleTemplate, format, args...))
+	rcv.sendMessageRequestAsync(formatfMessage(errorHeaderTemplate, errorStyleTemplate, format, args...))
 }
 
 func formatMessage(header, style string, args ...interface{}) string {
-	return fmt.Sprintf("%s<%s>%s</%s>", header, style, fmt.Sprint(args...), style)
+	return fmt.Sprintf("%s\n<%s>%s</%s>", header, style, fmt.Sprint(args...), style)
 }
 
 func formatfMessage(header, style, format string, args ...interface{}) string {
-	return fmt.Sprintf("%s<%s>%s</%s>", header, style, fmt.Sprintf(format, args...), style)
+	return fmt.Sprintf("%s\n<%s>%s</%s>", header, style, fmt.Sprintf(format, args...), style)
+}
+
+func (rcv *tlog) sendMessageRequestAsync(msg string) {
+	go rcv.sendMessageRequest(msg)
 }
 
 func (rcv *tlog) sendMessageRequest(msg string) {
-	log.Print(msg)
+	u, err := url.Parse(rcv.baseURL)
+	if err != nil {
+		log.Printf("[tlog] can't parse base URL: %v", err)
+		return
+	}
 
-	resp, err := http.Get(fmt.Sprintf(requestTemplate, rcv.apiKey, rcv.chanelID, msg))
+	params := url.Values{}
+	params.Add(chatIDKey, rcv.chatID)
+	params.Add(parseModeKey, "HTML")
+	params.Add(textKey, msg)
+
+	u.RawQuery = params.Encode()
+
+	log.Print(u.String())
+
+	resp, err := http.Get(u.String())
 	if err != nil {
 		log.Printf("[tlog] can't send message to chanel: %+v", err)
 		return
@@ -78,11 +107,9 @@ func (rcv *tlog) sendMessageRequest(msg string) {
 	}
 
 	defer func() {
-		if resp != nil {
-			err := resp.Body.Close()
-			if err != nil {
-				log.Printf("[tlog] can't close response body: %+v", err)
-			}
+		err := resp.Body.Close()
+		if err != nil {
+			log.Printf("[tlog] can't close response body: %+v", err)
 		}
 	}()
 }
