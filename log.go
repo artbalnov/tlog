@@ -95,8 +95,6 @@ func (rcv *tlog) sendMessageRequest(msg string) {
 
 	u.RawQuery = params.Encode()
 
-	log.Print(u.String())
-
 	resp, err := http.Get(u.String())
 	if err != nil {
 		log.Printf("[tlog] can't send message to chanel: %+v", err)
